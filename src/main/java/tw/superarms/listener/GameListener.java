@@ -1,106 +1,148 @@
 package tw.superarms.listener;
 
-import org.bukkit.*;
-import org.bukkit.entity.*;
-import org.bukkit.event.*;
+import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.enchantment.EnchantItemEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
-import org.bukkit.event.inventory.*;
-import org.bukkit.event.player.*;
-import org.bukkit.inventory.*;
-import tw.superarms.*;
-import tw.superarms.data.*;
-import tw.superarms.service.*;
-import tw.superarms.util.TextUtil;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.event.inventory.PrepareAnvilEvent;
+import org.bukkit.event.inventory.PrepareGrindstoneEvent;
+import org.bukkit.event.player.AsyncPlayerChatEvent;
+import org.bukkit.event.player.PlayerChangedWorldEvent;
+import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
+import tw.superarms.gui.GuiHolder;
+import tw.superarms.service.AdminService;
+import tw.superarms.service.ExpiryService;
+import tw.superarms.service.ItemService;
+import tw.superarms.service.ShopService;
 
 public final class GameListener implements Listener {
-  private final SuperArmsPlugin plugin;
-  private final WeaponRepository repo;
-  private final ShopService shop;
-  private final ExpiryService expiry;
 
-  public GameListener(SuperArmsPlugin p, WeaponRepository r, ShopService s, ExpiryService e) {
-    plugin = p;
-    repo = r;
-    shop = s;
-    expiry = e;
-  }
+    private final ShopService shop;
+    private final AdminService admin;
+    private final ExpiryService expiry;
 
-  @EventHandler
-  public void join(PlayerJoinEvent e) {
-    expiry.check(e.getPlayer());
-  }
-
-  @EventHandler
-  public void click(InventoryClickEvent e) {
-    if (!(e.getWhoClicked() instanceof Player p)) return;
-    String t = e.getView().getTitle();
-    if (t.contains("特武商城")) {
-      e.setCancelled(true);
-      if (e.getRawSlot() < 45) shop.clickShop(p, e.getRawSlot());
-    } else if (t.contains("確認購買")) {
-      e.setCancelled(true);
-      shop.clickConfirm(p, e.getRawSlot());
-    } else if (t.contains("SuperArms 管理")) {
-      e.setCancelled(true);
-      if (e.getRawSlot() == 11) {
-        WeaponDef d = repo.create("<gold>新特武");
-        p.sendMessage(
-            TextUtil.component(
-                plugin
-                    .messages()
-                    .getString("admin-created", "<green>已建立 %uuid%")
-                    .replace("%uuid%", d.id().toString())));
-        p.closeInventory();
-      } else if (e.getRawSlot() == 15) {
-        p.closeInventory();
-        for (WeaponDef d : repo.all())
-          p.sendMessage(
-              TextUtil.component(
-                  plugin
-                      .messages()
-                      .getString("list-line", "<yellow>%uuid% <white>%name%")
-                      .replace("%uuid%", d.id().toString())
-                      .replace("%name%", d.name())));
-      }
+    public GameListener(
+            ShopService shop,
+            AdminService admin,
+            ExpiryService expiry
+    ) {
+        this.shop = shop;
+        this.admin = admin;
+        this.expiry = expiry;
     }
-  }
 
-  @EventHandler
-  public void close(InventoryCloseEvent e) {
-    if (e.getPlayer() instanceof Player p) shop.confirms().remove(p.getUniqueId());
-  }
+    @EventHandler
+    public void join(PlayerJoinEvent event) {
+        expiry.checkInventory(event.getPlayer());
+    }
 
-  @EventHandler
-  public void use(PlayerInteractEvent e) {
-    if (e.getItem() != null) expiry.check(e.getPlayer());
-  }
+    @EventHandler
+    public void click(InventoryClickEvent event) {
+        if (!(event.getWhoClicked() instanceof Player player)) {
+            return;
+        }
+        if (!(event.getView().getTopInventory().getHolder() instanceof GuiHolder holder)) {
+            return;
+        }
 
-  @EventHandler
-  public void breakBlock(BlockBreakEvent e) {
-    expiry.check(e.getPlayer());
-  }
+        event.setCancelled(true);
+        int slot = event.getRawSlot();
+        if (slot < 0 || slot >= event.getView().getTopInventory().getSize()) {
+            return;
+        }
 
-  @EventHandler
-  public void damage(EntityDamageByEntityEvent e) {
-    if (e.getDamager() instanceof Player p) expiry.check(p);
-  }
+        switch (holder.type()) {
+            case SHOP -> shop.clickShop(player, holder, slot);
+            case CONFIRM -> shop.clickConfirm(player, holder, slot);
+            case ADMIN_HOME,
+                    ADMIN_MANAGE,
+                    ADMIN_LORE_REMOVE,
+                    ADMIN_ENCHANT_ADD,
+                    ADMIN_ENCHANT_REMOVE,
+                    ADMIN_DELETE_CONFIRM -> admin.click(player, holder, slot);
+        }
+    }
 
-  @EventHandler
-  public void grind(PrepareGrindstoneEvent e) {
-    if (ItemService.def(e.getInventory().getItem(0)) != null
-        || ItemService.def(e.getInventory().getItem(1)) != null) e.setResult(null);
-  }
+    @EventHandler
+    public void drag(InventoryDragEvent event) {
+        if (event.getView().getTopInventory().getHolder() instanceof GuiHolder) {
+            event.setCancelled(true);
+        }
+    }
 
-  @EventHandler
-  public void anvil(PrepareAnvilEvent e) {
-    if (ItemService.def(e.getInventory().getItem(0)) != null
-        || ItemService.def(e.getInventory().getItem(1)) != null) e.setResult(null);
-  }
+    @EventHandler
+    public void close(InventoryCloseEvent event) {
+        if (event.getInventory().getHolder() instanceof GuiHolder holder
+                && holder.type() == GuiHolder.Type.CONFIRM) {
+            shop.closeConfirm(event.getPlayer().getUniqueId());
+        }
+    }
 
-  @EventHandler
-  public void enchant(EnchantItemEvent e) {
-    if (ItemService.def(e.getItem()) != null) e.setCancelled(true);
-  }
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void chat(AsyncPlayerChatEvent event) {
+        if (admin.acceptChat(event.getPlayer(), event.getMessage())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler
+    public void quit(PlayerQuitEvent event) {
+        admin.cancelInput(event.getPlayer().getUniqueId());
+        shop.closeConfirm(event.getPlayer().getUniqueId());
+    }
+
+    @EventHandler
+    public void changedWorld(PlayerChangedWorldEvent event) {
+        admin.cancelInput(event.getPlayer().getUniqueId());
+    }
+
+    @EventHandler
+    public void use(PlayerInteractEvent event) {
+        if (event.getItem() != null) {
+            expiry.checkMainHand(event.getPlayer());
+        }
+    }
+
+    @EventHandler
+    public void breakBlock(BlockBreakEvent event) {
+        expiry.checkMainHand(event.getPlayer());
+    }
+
+    @EventHandler
+    public void damage(EntityDamageByEntityEvent event) {
+        if (event.getDamager() instanceof Player player) {
+            expiry.checkMainHand(player);
+        }
+    }
+
+    @EventHandler
+    public void grind(PrepareGrindstoneEvent event) {
+        if (ItemService.def(event.getInventory().getItem(0)) != null
+                || ItemService.def(event.getInventory().getItem(1)) != null) {
+            event.setResult(null);
+        }
+    }
+
+    @EventHandler
+    public void anvil(PrepareAnvilEvent event) {
+        if (ItemService.def(event.getInventory().getItem(0)) != null
+                || ItemService.def(event.getInventory().getItem(1)) != null) {
+            event.setResult(null);
+        }
+    }
+
+    @EventHandler
+    public void enchant(EnchantItemEvent event) {
+        if (ItemService.def(event.getItem()) != null) {
+            event.setCancelled(true);
+        }
+    }
 }

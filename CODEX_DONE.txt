@@ -42,3 +42,56 @@ Glint 方案
 偏離與限制
 - 指定的 `/home/user/.hermes/skills/minecraft/minecraft-server-ops/references/folia-plugin-dev-gotchas.md` 在本機不存在，因此改以 Folia 1.21.11 API 反射/編譯驗證。
 - 管理編輯 wizard（逐欄輸入、附魔選擇等）尚以 Chest GUI 的新增與列表入口為主，未建立完整多步文字輸入流程；其餘玩家購買、PDC、時限、保護與經濟閉環已實作。
+
+第二輪修正（2026-09-04）
+
+P0 管理 GUI / Chat wizard
+1. 已完成 Home GUI：同頁顯示新增武器與模板 item 預覽列表；新增預設 DIAMOND_SWORD 後直接進 Manage；每頁 45 把並有上一頁/下一頁，不再遺失第 46 把以後的模板。
+2. 已完成單武器 Manage GUI：中央顯示武器預覽，提供 Rename、Lore Add/Remove、Enchantment Add/Remove、Set Price、Set Last Buy Time、Set Arms Timeout、Set Material、Copy UUID、Delete 確認；另補齊 spec 中的 Unbreakable 與 Glow toggle。
+3. Rename 與 Lore Add 已使用 chat prompt，輸入會經 TextUtil.mm 統一轉成 MiniMessage，支援 legacy &/§ 與 MiniMessage。
+4. Add Enchantment 已從 Bukkit enchantment registry 列出 key 並支援分頁，選取後用 chat prompt 輸入等級；Remove Enchantment 會列出模板目前定義並點擊移除。
+5. Set Price 會顯示目前幣種與金額，點擊時在 VAULT / PLAYER_POINTS 間切換並存檔，再提示輸入非負金額。
+6. Set Last Buy Time 支援 yyyy-MM-dd HH:mm；空字串、0 或 - 會清除截止時間。Set Arms Timeout 支援 Nd/Nh/Nm/Ns 與 0。Set Material 會驗證 Bukkit item material。
+7. Copy UUID 會關閉 GUI 後在聊天顯示完整 UUID；Delete 使用獨立確認頁。
+8. 所有管理 GUI 開啟、點擊與 chat callback 都重新檢查 superarms.admin；每個實際變更都呼叫 repo.save()。
+9. Chat prompt 使用 ConcurrentHashMap 標記輸入中的玩家，AsyncPlayerChatEvent 僅攔截有 pending prompt 的下一句；實際修改轉回 player entity scheduler，無效輸入會保留 prompt 重試。
+10. 玩家 quit、切換世界、reload、plugin disable 都會清除 prompt；prompt 另記錄開始時 world UUID，避免 chat/scheduler 競態留下殘留狀態。
+
+P1 bugs
+1. Lore 重複堆疊：ItemService.expire() 一開始就把 PDC EXP 寫成 0；後續 join/callback/lazy 檢查會直接跳過。
+2. expire() 誤刪最後一行：改用 PlainTextComponentSerializer 掃描並只刪除含「附魔有效至」的行；找不到不刪其他 lore。若已有「附魔已失效」，不再修改 lore，只補清 EXP；否則只新增一次失效行。
+3. Lazy 掃描過重：join 與精準 callback 才走 checkInventory()；use、breakBlock、damage 全部改走 checkMainHand()，只讀寫事件玩家當下主手物品。
+4. /superarms <uuid>：找到模板後改為 AdminService.openManage()，不再開玩家商店。
+5. buy / shop 權限：buy.permission-required=true 時，/superarms shop、/superarms buy <uuid>、GUI 點擊與最後扣款前都檢查 superarms.buy；無權限直接回 no-permission。
+
+P2 健壯性
+6. GUI 識別：新增 GuiHolder，holder 帶 GUI type、weapon UUID、page 與頁容量；InventoryClickEvent/Drag/Close 全部以 holder instanceof/type 分派，不再依賴 title contains。
+7. Shop 分頁：依 gui.shop-rows 的 2~6 列計算資料區，預設 6 列為每頁 45 把；底列提供上一頁/下一頁，holder 保存建立當下頁容量。
+8. buy 過期檢查：商店列表只取仍在販售的模板；開確認頁、GUI 最後購買與 buy 指令共用 purchase()，每次都重新檢查 sell-until，到期回 weapon-expired-sell。
+9. reload 狀態：/superarms reload 明確呼叫 shop.clearConfirms()，同時清除 admin chat prompts；confirm holder 與 confirms UUID 會雙重核對。只有真正關閉 confirm GUI 才清該確認，不會因 shop -> confirm 的 close event 提前刪掉。
+
+額外修正
+- 修正 WeaponRepository.load() 原本以 weapons section 再讀 weapons.<uuid> 相對路徑，導致已存模板欄位讀回預設值；現在以每個 UUID child section 讀取，未知 material 回退 DIAMOND_SWORD。
+- WeaponRepository.all() 回傳 snapshot 並同步 load/save/create/remove，避免 Folia 多 entity thread 迭代時 ConcurrentModificationException。
+- 經濟 provider 嚴格依 currency 選擇；PlayerPoints 缺少時不會錯誤 fallback 成 Vault 扣款。
+- Bukkit NamespacedKey 不允許大寫，PDC expiresAt 的實際 key 改用 superarms:expires_at；Java 欄位與規格語意仍維持 expiresAt。
+- 新增嚴格 date/duration parser；錯誤日期（例如 2026-02-30）與 overflow duration 不再被默認成永久/不限。
+- 全部本輪新增與改寫 Java 使用正常多行 statement、4-space 縮排；無單行壓縮 if/for。
+
+驗證
+- `mvn package`：BUILD SUCCESS。
+- JUnit：6 tests，0 failures，0 errors，0 skipped（TextUtilTest 4、WeaponDefTest 2）。
+- 舊症狀靜態回歸檢查：不再有「無條件刪最後 lore」、title 字串 GUI 分派或 lazy expiry.check 全背包呼叫。
+- 產出：target/SuperArms-0.1.0.jar。
+
+偏離與原因
+- 依本輪要求使用 Chest GUI + Chat prompt，未使用不可用的 Dialog API。
+- Minecraft client 無法送出真正的空聊天訊息；程式仍接受空字串，並額外提供 0 / - 作為玩家實際可輸入的「不限」值。
+- PDC schema 文件名稱為 expiresAt，但 Bukkit NamespacedKey 僅允許小寫字元，因此實際持久化 key 使用 expires_at，否則 plugin 會在建立 key 時拋 IllegalArgumentException。
+- 本機沒有可啟動的 Canvas/Folia 測試伺服器，因此未做真人 GUI 點擊測試；以 Folia API 1.21.11 編譯、JUnit 與 holder/事件路徑靜態檢查驗證。
+
+第三輪修正（Hermes review，2026-09-04）
+- softdepend 崩潰修復：原 EconomyService 直接 import Vault/PlayerPoints class，實測（Paper 1.21.11 測試服、無 Vault/PlayerPoints）enable 時拋 NoClassDefFoundError → 整個插件無法載入，違反「缺外掛優雅降級」。
+- 新增 economy/SoftDependReflector.java：以反射存取 Vault（RegisteredServiceProvider<Economy>）與 PlayerPoints（PlayerPointsAPI），全部 class 名稱字串化，未安裝時 provider() 回傳 null。
+- EconomyService 重寫為純反射呼叫，無直接 import Vault/PlayerPoints。
+- 驗證：測試服 enable 成功（無 Vault 環境），載入測試 weapons.yml、/superarms list 正確列出、/superarms reload 正常且重載後資料仍在、server 全程無 crash。

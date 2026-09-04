@@ -1,106 +1,142 @@
 package tw.superarms.data;
 
-import java.io.*;
-import java.util.*;
-import org.bukkit.*;
-import org.bukkit.configuration.*;
-import org.bukkit.configuration.file.*;
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.UUID;
+import org.bukkit.Material;
+import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
 import tw.superarms.SuperArmsPlugin;
 import tw.superarms.util.TextUtil;
 
 public final class WeaponRepository {
-  private final SuperArmsPlugin plugin;
-  private final Map<UUID, WeaponDef> defs = new LinkedHashMap<>();
-  private File file;
-  private FileConfiguration cfg;
 
-  public WeaponRepository(SuperArmsPlugin p) {
-    plugin = p;
-    file = new File(p.getDataFolder(), "weapons.yml");
-  }
+    private final SuperArmsPlugin plugin;
+    private final Map<UUID, WeaponDef> definitions = new LinkedHashMap<>();
+    private final File file;
 
-  public void load() {
-    try {
-      if (!file.exists()) {
-        file.getParentFile().mkdirs();
-        file.createNewFile();
-      }
-      cfg = YamlConfiguration.loadConfiguration(file);
-      defs.clear();
-      ConfigurationSection s = cfg.getConfigurationSection("weapons");
-      if (s == null) return;
-      for (String k : s.getKeys(false)) {
+    public WeaponRepository(SuperArmsPlugin plugin) {
+        this.plugin = plugin;
+        this.file = new File(plugin.getDataFolder(), "weapons.yml");
+    }
+
+    public synchronized void load() {
         try {
-          UUID id = UUID.fromString(k);
-          String b = "weapons." + k;
-          WeaponDef d = new WeaponDef(id);
-          d.name(s.getString(b + ".name", k));
-          d.material(Material.matchMaterial(s.getString(b + ".material", "DIAMOND_SWORD")));
-          d.customModelData(
-              s.isInt(b + ".custom-model-data") ? s.getInt(b + ".custom-model-data") : null);
-          d.unbreakable(s.getBoolean(b + ".unbreakable", true));
-          d.lore().addAll(s.getStringList(b + ".lore"));
-          ConfigurationSection es = s.getConfigurationSection(b + ".enchantments");
-          if (es != null) for (String e : es.getKeys(false)) d.enchantments().put(e, es.getInt(e));
-          d.timeoutMillis(TextUtil.parseDuration(s.getString(b + ".timeout", "0")));
-          d.sellUntil(TextUtil.parseDate(s.getString(b + ".sell-until", "")));
-          d.currency(s.getString(b + ".price.currency", "VAULT"));
-          d.price(s.getDouble(b + ".price.amount", 0));
-          d.glow(s.getBoolean(b + ".flags.glow", true));
-          d.announce(s.getBoolean(b + ".flags.announce", true));
-          d.protection(s.getBoolean(b + ".flags.protection", true));
-          defs.put(id, d);
-        } catch (Exception ignored) {
+            ensureFileExists();
+            FileConfiguration configuration = YamlConfiguration.loadConfiguration(file);
+            definitions.clear();
+            ConfigurationSection weapons = configuration.getConfigurationSection("weapons");
+            if (weapons == null) {
+                return;
+            }
+            for (String idValue : weapons.getKeys(false)) {
+                loadWeapon(weapons.getConfigurationSection(idValue), idValue);
+            }
+        } catch (IOException exception) {
+            plugin.getLogger().warning("Unable to load weapons.yml: " + exception.getMessage());
         }
-      }
-    } catch (IOException e) {
-      plugin.getLogger().warning("Unable to load weapons.yml: " + e.getMessage());
     }
-  }
 
-  public void save() {
-    FileConfiguration out = new YamlConfiguration();
-    for (WeaponDef d : defs.values()) {
-      String b = "weapons." + d.id();
-      out.set(b + ".name", d.name());
-      out.set(b + ".material", d.material().name());
-      out.set(b + ".custom-model-data", d.customModelData());
-      out.set(b + ".unbreakable", d.unbreakable());
-      out.set(b + ".lore", d.lore());
-      out.set(b + ".enchantments", d.enchantments());
-      out.set(b + ".timeout", TextUtil.duration(d.timeoutMillis()));
-      out.set(b + ".sell-until", TextUtil.date(d.sellUntil()));
-      out.set(b + ".price.currency", d.currency());
-      out.set(b + ".price.amount", d.price());
-      out.set(b + ".flags.glow", d.glow());
-      out.set(b + ".flags.announce", d.announce());
-      out.set(b + ".flags.protection", d.protection());
+    public synchronized void save() {
+        FileConfiguration output = new YamlConfiguration();
+        for (WeaponDef weapon : definitions.values()) {
+            String path = "weapons." + weapon.id();
+            output.set(path + ".name", weapon.name());
+            output.set(path + ".material", weapon.material().name());
+            output.set(path + ".custom-model-data", weapon.customModelData());
+            output.set(path + ".unbreakable", weapon.unbreakable());
+            output.set(path + ".lore", weapon.lore());
+            output.set(path + ".enchantments", weapon.enchantments());
+            output.set(path + ".timeout", TextUtil.duration(weapon.timeoutMillis()));
+            output.set(path + ".sell-until", TextUtil.date(weapon.sellUntil()));
+            output.set(path + ".price.currency", weapon.currency());
+            output.set(path + ".price.amount", weapon.price());
+            output.set(path + ".flags.glow", weapon.glow());
+            output.set(path + ".flags.announce", weapon.announce());
+            output.set(path + ".flags.protection", weapon.protection());
+        }
+        try {
+            ensureFileExists();
+            output.save(file);
+        } catch (IOException exception) {
+            plugin.getLogger().warning("Unable to save weapons.yml: " + exception.getMessage());
+        }
     }
-    try {
-      out.save(file);
-    } catch (IOException e) {
-      plugin.getLogger().warning("Unable to save weapons.yml: " + e.getMessage());
+
+    public synchronized Collection<WeaponDef> all() {
+        return new ArrayList<>(definitions.values());
     }
-  }
 
-  public Collection<WeaponDef> all() {
-    return defs.values();
-  }
+    public synchronized WeaponDef get(UUID id) {
+        return definitions.get(id);
+    }
 
-  public WeaponDef get(UUID id) {
-    return defs.get(id);
-  }
+    public synchronized WeaponDef create(String name) {
+        WeaponDef weapon = new WeaponDef(UUID.randomUUID());
+        weapon.name(TextUtil.mm(name));
+        definitions.put(weapon.id(), weapon);
+        save();
+        return weapon;
+    }
 
-  public WeaponDef create(String name) {
-    WeaponDef d = new WeaponDef(UUID.randomUUID());
-    d.name(TextUtil.mm(name));
-    defs.put(d.id(), d);
-    save();
-    return d;
-  }
+    public synchronized void remove(UUID id) {
+        definitions.remove(id);
+        save();
+    }
 
-  public void remove(UUID id) {
-    defs.remove(id);
-    save();
-  }
+    private void ensureFileExists() throws IOException {
+        File parent = file.getParentFile();
+        if (!parent.exists() && !parent.mkdirs()) {
+            throw new IOException("Unable to create plugin data directory");
+        }
+        if (!file.exists() && !file.createNewFile()) {
+            throw new IOException("Unable to create weapons.yml");
+        }
+    }
+
+    private void loadWeapon(ConfigurationSection section, String idValue) {
+        if (section == null) {
+            return;
+        }
+        try {
+            UUID id = UUID.fromString(idValue);
+            WeaponDef weapon = new WeaponDef(id);
+            weapon.name(section.getString("name", idValue));
+            Material material = Material.matchMaterial(
+                    section.getString("material", "DIAMOND_SWORD")
+            );
+            weapon.material(material == null ? Material.DIAMOND_SWORD : material);
+            weapon.customModelData(
+                    section.isInt("custom-model-data")
+                            ? section.getInt("custom-model-data")
+                            : null
+            );
+            weapon.unbreakable(section.getBoolean("unbreakable", true));
+            weapon.lore().addAll(section.getStringList("lore"));
+            ConfigurationSection enchantments = section.getConfigurationSection("enchantments");
+            if (enchantments != null) {
+                for (String enchantment : enchantments.getKeys(false)) {
+                    weapon.enchantments().put(
+                            enchantment,
+                            enchantments.getInt(enchantment)
+                    );
+                }
+            }
+            weapon.timeoutMillis(TextUtil.parseDuration(section.getString("timeout", "0")));
+            weapon.sellUntil(TextUtil.parseDate(section.getString("sell-until", "")));
+            weapon.currency(section.getString("price.currency", "VAULT"));
+            weapon.price(section.getDouble("price.amount", 0));
+            weapon.glow(section.getBoolean("flags.glow", true));
+            weapon.announce(section.getBoolean("flags.announce", true));
+            weapon.protection(section.getBoolean("flags.protection", true));
+            definitions.put(id, weapon);
+        } catch (IllegalArgumentException exception) {
+            plugin.getLogger().warning("Skipping invalid weapon UUID: " + idValue);
+        }
+    }
 }

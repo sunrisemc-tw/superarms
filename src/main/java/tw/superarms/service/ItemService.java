@@ -1,79 +1,172 @@
 package tw.superarms.service;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.UUID;
 import net.kyori.adventure.text.Component;
-import org.bukkit.*;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
+import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
+import org.bukkit.Registry;
 import org.bukkit.enchantments.Enchantment;
-import org.bukkit.inventory.*;
-import org.bukkit.inventory.meta.*;
-import org.bukkit.persistence.*;
-import tw.superarms.*;
-import tw.superarms.data.*;
+import org.bukkit.inventory.ItemFlag;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.persistence.PersistentDataContainer;
+import org.bukkit.persistence.PersistentDataType;
+import tw.superarms.SuperArmsPlugin;
+import tw.superarms.data.WeaponDef;
 import tw.superarms.util.TextUtil;
 
 public final class ItemService {
-  public static final NamespacedKey DEF = new NamespacedKey(SuperArmsPlugin.getInstance(), "def"),
-      EXP = new NamespacedKey(SuperArmsPlugin.getInstance(), "expiresAt"),
-      OWNER = new NamespacedKey(SuperArmsPlugin.getInstance(), "owner"),
-      BOUGHT = new NamespacedKey(SuperArmsPlugin.getInstance(), "boughtAt");
 
-  public static ItemStack create(WeaponDef d, UUID owner) {
-    ItemStack i = new ItemStack(d.material());
-    ItemMeta m = i.getItemMeta();
-    m.displayName(TextUtil.component(d.name()));
-    List<Component> lore = new ArrayList<>();
-    for (String l : d.lore()) lore.add(TextUtil.component(l));
-    long exp = d.timeoutMillis() == 0 ? 0 : System.currentTimeMillis() + d.timeoutMillis();
-    if (d.timeoutMillis() > 0) lore.add(TextUtil.component("<green>附魔有效至 " + TextUtil.date(exp)));
-    m.lore(lore);
-    m.setUnbreakable(d.unbreakable());
-    if (d.customModelData() != null) m.setCustomModelData(d.customModelData());
-    for (var e : d.enchantments().entrySet()) {
-      Enchantment x = Enchantment.getByKey(NamespacedKey.minecraft(e.getKey().toLowerCase()));
-      if (x != null) m.addEnchant(x, e.getValue(), true);
-    }
-    if (d.glow()) {
-      m.addEnchant(Enchantment.LURE, 1, true);
-      m.addItemFlags(ItemFlag.HIDE_ENCHANTS);
-    }
-    PersistentDataContainer p = m.getPersistentDataContainer();
-    p.set(DEF, PersistentDataType.STRING, d.id().toString());
-    p.set(EXP, PersistentDataType.LONG, exp);
-    p.set(OWNER, PersistentDataType.STRING, owner.toString());
-    p.set(BOUGHT, PersistentDataType.LONG, System.currentTimeMillis());
-    i.setItemMeta(m);
-    return i;
-  }
+    public static final NamespacedKey DEF = new NamespacedKey(
+            SuperArmsPlugin.getInstance(),
+            "def"
+    );
+    public static final NamespacedKey EXP = new NamespacedKey(
+            SuperArmsPlugin.getInstance(),
+            "expires_at"
+    );
+    public static final NamespacedKey OWNER = new NamespacedKey(
+            SuperArmsPlugin.getInstance(),
+            "owner"
+    );
+    public static final NamespacedKey BOUGHT = new NamespacedKey(
+            SuperArmsPlugin.getInstance(),
+            "boughtAt"
+    );
 
-  public static UUID def(ItemStack i) {
-    if (i == null || !i.hasItemMeta()) return null;
-    String s = i.getItemMeta().getPersistentDataContainer().get(DEF, PersistentDataType.STRING);
-    try {
-      return s == null ? null : UUID.fromString(s);
-    } catch (Exception e) {
-      return null;
-    }
-  }
+    private static final String VALID_UNTIL_TEXT = "附魔有效至";
+    private static final String EXPIRED_TEXT = "附魔已失效";
+    private static final PlainTextComponentSerializer PLAIN_TEXT =
+            PlainTextComponentSerializer.plainText();
 
-  public static long expires(ItemStack i) {
-    if (i == null || !i.hasItemMeta()) return 0;
-    Long x = i.getItemMeta().getPersistentDataContainer().get(EXP, PersistentDataType.LONG);
-    return x == null ? 0 : x;
-  }
-
-  public static ItemStack expire(ItemStack src, WeaponDef d) {
-    ItemStack i = src.clone();
-    ItemMeta m = i.getItemMeta();
-    for (String n : d.enchantments().keySet()) {
-      Enchantment e = Enchantment.getByKey(NamespacedKey.minecraft(n.toLowerCase()));
-      if (e != null) m.removeEnchant(e);
+    private ItemService() {
     }
-    m.removeEnchant(Enchantment.LURE);
-    List<Component> l = m.lore() == null ? new ArrayList<>() : new ArrayList<>(m.lore());
-    if (!l.isEmpty()) l.remove(l.size() - 1);
-    l.add(TextUtil.component("<red>附魔已失效"));
-    m.lore(l);
-    i.setItemMeta(m);
-    return i;
-  }
+
+    public static ItemStack create(WeaponDef weapon, UUID owner) {
+        long boughtAt = System.currentTimeMillis();
+        long expiresAt = weapon.timeoutMillis() == 0
+                ? 0
+                : boughtAt + weapon.timeoutMillis();
+        ItemStack item = render(weapon, expiresAt);
+        ItemMeta meta = item.getItemMeta();
+        PersistentDataContainer pdc = meta.getPersistentDataContainer();
+        pdc.set(DEF, PersistentDataType.STRING, weapon.id().toString());
+        pdc.set(EXP, PersistentDataType.LONG, expiresAt);
+        pdc.set(OWNER, PersistentDataType.STRING, owner.toString());
+        pdc.set(BOUGHT, PersistentDataType.LONG, boughtAt);
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    public static ItemStack preview(WeaponDef weapon) {
+        return render(weapon, 0);
+    }
+
+    public static UUID def(ItemStack item) {
+        if (item == null || !item.hasItemMeta()) {
+            return null;
+        }
+        String value = item.getItemMeta()
+                .getPersistentDataContainer()
+                .get(DEF, PersistentDataType.STRING);
+        try {
+            return value == null ? null : UUID.fromString(value);
+        } catch (IllegalArgumentException exception) {
+            return null;
+        }
+    }
+
+    public static long expires(ItemStack item) {
+        if (item == null || !item.hasItemMeta()) {
+            return 0;
+        }
+        Long value = item.getItemMeta()
+                .getPersistentDataContainer()
+                .get(EXP, PersistentDataType.LONG);
+        return value == null ? 0 : value;
+    }
+
+    public static ItemStack expire(ItemStack source, WeaponDef weapon) {
+        ItemStack item = source.clone();
+        ItemMeta meta = item.getItemMeta();
+        List<Component> lore = meta.lore() == null
+                ? new ArrayList<>()
+                : new ArrayList<>(meta.lore());
+        boolean alreadyExpired = lore.stream().anyMatch(line -> containsText(line, EXPIRED_TEXT));
+
+        meta.getPersistentDataContainer().set(EXP, PersistentDataType.LONG, 0L);
+        if (alreadyExpired) {
+            item.setItemMeta(meta);
+            return item;
+        }
+
+        for (String name : weapon.enchantments().keySet()) {
+            Enchantment enchantment = enchantment(name);
+            if (enchantment != null) {
+                meta.removeEnchant(enchantment);
+            }
+        }
+        meta.removeEnchant(Enchantment.LURE);
+        lore.removeIf(line -> containsText(line, VALID_UNTIL_TEXT));
+        lore.add(TextUtil.component("<red>附魔已失效"));
+        meta.lore(lore);
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    public static Enchantment enchantment(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String normalized = value.trim().toLowerCase(Locale.ROOT);
+        NamespacedKey key = normalized.contains(":")
+                ? NamespacedKey.fromString(normalized)
+                : NamespacedKey.minecraft(normalized);
+        if (key == null) {
+            return null;
+        }
+        return Registry.ENCHANTMENT.get(key);
+    }
+
+    private static ItemStack render(WeaponDef weapon, long expiresAt) {
+        Material material = weapon.material() == null
+                ? Material.DIAMOND_SWORD
+                : weapon.material();
+        ItemStack item = new ItemStack(material);
+        ItemMeta meta = item.getItemMeta();
+        meta.displayName(TextUtil.component(weapon.name()));
+
+        List<Component> lore = new ArrayList<>();
+        for (String line : weapon.lore()) {
+            lore.add(TextUtil.component(line));
+        }
+        if (expiresAt > 0) {
+            lore.add(TextUtil.component("<green>附魔有效至 " + TextUtil.date(expiresAt)));
+        }
+        meta.lore(lore);
+        meta.setUnbreakable(weapon.unbreakable());
+        if (weapon.customModelData() != null) {
+            meta.setCustomModelData(weapon.customModelData());
+        }
+        for (var entry : weapon.enchantments().entrySet()) {
+            Enchantment enchantment = enchantment(entry.getKey());
+            if (enchantment != null) {
+                meta.addEnchant(enchantment, entry.getValue(), true);
+            }
+        }
+        if (weapon.glow()) {
+            meta.addEnchant(Enchantment.LURE, 1, true);
+            meta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
+        }
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    private static boolean containsText(Component component, String text) {
+        return PLAIN_TEXT.serialize(component).contains(text);
+    }
 }
