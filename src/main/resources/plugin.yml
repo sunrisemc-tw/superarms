@@ -1,0 +1,25 @@
+name: SuperArms
+version: ${project.version}
+main: tw.superarms.SuperArmsPlugin
+api-version: '1.21.11'
+folia-supported: true
+description: 特武系統：模板定義 / 附魔時限 / 商店（Folia / Canvas）
+author: SunriseMC
+softdepend:
+  - Vault
+  - PlayerPoints
+commands:
+  superarms:
+    description: SuperArms 特武系統主指令
+    usage: /superarms
+    aliases: [sa]
+permissions:
+  superarms.admin:
+    description: 管理特武（GUI / 建立 / 編輯 / 刪除 / reload）
+    default: op
+  superarms.buy:
+    description: 玩家購買特武
+    default: true
+  superarms.bypass.limit:
+    description: 無視每日限購（保留）
+    default: op
