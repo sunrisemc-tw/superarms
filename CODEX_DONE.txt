@@ -1,0 +1,44 @@
+SuperArms M1~M6 實作完成紀錄
+
+M1 資料層
+- 建立 WeaponDef 與 WeaponRepository。
+- weapons.yml 支援 UUID、名稱、材質、CMD、不可破壞、Lore、附魔、timeout、sell-until、價格、旗標。
+- timeout 支援 Nd/Nh/Nm/Ns/0；sell-until 以 yyyy-MM-dd HH:mm 可讀字串儲存，記憶體使用 epoch millis。
+- 建立 superarms PDC：def STRING、expiresAt LONG、owner STRING、boughtAt LONG。
+- TextUtil 支援 legacy &/§ 轉 MiniMessage。
+
+M2 指令與管理 UI
+- 實作 /superarms、shop、buy <uuid>、list、reload、arms <uuid> 與 tab completion。
+- 管理首頁採 Chest GUI，支援新增預設武器與列出模板；管理員可由 UUID 進入管理入口。
+- Folia API 1.21.11 雖包含 io.papermc.paper.dialog 類別，但本地 API 缺少可穩定使用的完整 builder/callback wizard 介面；為避免版本耦合與確保編譯，改用原生 Chest GUI 完成同等管理入口流程。
+
+M3 購買流
+- 玩家 Chest GUI 商店與確認頁，過期 sell-until 自動隱藏。
+- CurrencyProvider 抽象，實作 Vault 與 PlayerPoints；缺少外掛時優雅降級。
+- 滿包先檢查再扣款；成功後寫入 PDC、log，並依設定廣播。
+
+M4 時限閉環
+- 購買後 region scheduler 精準排程，callback 轉 player entity scheduler rewrite。
+- PlayerJoin 補查與攻擊、破壞方塊、右鍵 lazy 檢查。
+- 到期只移除模板定義附魔與 glint 來源附魔，保留玩家後加附魔；Lore 尾端改為「附魔已失效」，不改 material/name。
+
+M5 物品保護
+- PrepareGrindstoneEvent、PrepareAnvilEvent、EnchantItemEvent 先查 superarms:def，再阻擋拆附魔、鐵砧合併/改名/加書與附魔台操作。
+
+M6 打磨
+- config.yml 與 messages.yml 分離，玩家可見訊息走 MiniMessage messages.yml。
+- 支援商店標題、廣播、音效設定欄位、權限與 reload/list。
+
+Dialog API 狀況
+- 未使用 Dialog API，原因如 M2 所述：本地 folia-api 版本缺少可穩定組裝完整 wizard callback 的公開 builder 介面，改採 Chest GUI。
+
+Glint 方案
+- glow=true 時加入 LURE 1 並以 ItemFlag.HIDE_ENCHANTS 隱藏；到期移除 LURE。LURE 對武器無實際戰鬥副作用，且純 Bukkit API 可用。
+
+建置
+- `mvn package -DskipTests` 成功。
+- 產出 `target/SuperArms-0.1.0.jar`。
+
+偏離與限制
+- 指定的 `/home/user/.hermes/skills/minecraft/minecraft-server-ops/references/folia-plugin-dev-gotchas.md` 在本機不存在，因此改以 Folia 1.21.11 API 反射/編譯驗證。
+- 管理編輯 wizard（逐欄輸入、附魔選擇等）尚以 Chest GUI 的新增與列表入口為主，未建立完整多步文字輸入流程；其餘玩家購買、PDC、時限、保護與經濟閉環已實作。

@@ -1,0 +1,20 @@
+prefix: "<gradient:#FFD700:#FF8C00>[特武]</gradient> "
+gui:
+  shop-title: "<gold>特武商城"
+  confirm-title: "<gold>確認購買"
+  shop-rows: 6
+buy:
+  permission-required: false
+  give-on-full-inventory: false
+  sound-success: ENTITY_PLAYER_LEVELUP
+  sound-fail: BLOCK_NOTE_BLOCK_BASS
+  broadcast:
+    enabled: true
+    format: "<yellow>%player% 購買了 %weapon%！"
+economy:
+  vault: true
+  player-points: true
+protection:
+  grindstone: true
+  anvil: true
+  enchant-table: true
