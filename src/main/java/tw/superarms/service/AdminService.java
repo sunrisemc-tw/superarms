@@ -67,6 +67,7 @@ public final class AdminService {
                 54,
                 "<gold>SuperArms 管理 <gray>(" + weapons.size() + ")"
         );
+        fillFrame(inventory);
 
         int start = page * PAGE_SIZE;
         int end = Math.min(start + PAGE_SIZE, weapons.size());
@@ -98,70 +99,105 @@ public final class AdminService {
 
         GuiHolder holder = new GuiHolder(GuiHolder.Type.ADMIN_MANAGE, weaponId, 0);
         Inventory inventory = createInventory(holder, 54, "<gold>管理武器");
+        fillFrame(inventory);
+
+        // 中央：武器本體預覽（hover 看名稱/Lore）
         inventory.setItem(13, ItemService.preview(weapon));
+        // 第一列：名稱/Lore（左）｜武器｜附魔/材質（右）
         inventory.setItem(10, button(Material.NAME_TAG, "<yellow>重新命名"));
         inventory.setItem(11, button(Material.WRITABLE_BOOK, "<green>新增 Lore"));
         inventory.setItem(12, button(Material.BOOK, "<red>移除 Lore"));
-        inventory.setItem(19, button(Material.ENCHANTED_BOOK, "<green>新增附魔"));
-        inventory.setItem(20, button(Material.GRINDSTONE, "<red>移除附魔"));
+        inventory.setItem(14, button(Material.ENCHANTED_BOOK, "<green>新增附魔"));
+        inventory.setItem(15, button(Material.GRINDSTONE, "<red>移除附魔"));
         inventory.setItem(
-                21,
+                16,
+                button(
+                        weapon.material() == null ? Material.DIAMOND_SWORD : weapon.material(),
+                        "<yellow>設定材質",
+                        List.of("<gray>目前: <white>"
+                                + (weapon.material() == null ? "DIAMOND_SWORD" : weapon.material().name()))
+                )
+        );
+        // 第二列：價格/販售截止/時限（左）｜不可破壞/發光/預覽（右）
+        inventory.setItem(
+                19,
                 button(
                         Material.GOLD_INGOT,
                         "<yellow>設定價格",
                         List.of(
-                                "<gray>目前幣種: <white>" + weapon.currency(),
-                                "<gray>目前金額: <white>" + weapon.price(),
+                                "<gray>幣種: <white>" + weapon.currency(),
+                                "<gray>金額: <white>" + weapon.price(),
                                 "<gray>點擊切換幣種並輸入金額"
                         )
                 )
         );
         inventory.setItem(
-                22,
+                20,
                 button(
                         Material.CLOCK,
-                        "<yellow>設定販售截止",
+                        "<yellow>販售截止",
                         List.of(
                                 "<gray>目前: <white>"
                                         + (weapon.sellUntil() == 0
                                         ? "不限"
-                                        : TextUtil.date(weapon.sellUntil()))
+                                        : TextUtil.date(weapon.sellUntil())),
+                                "<gray>點擊設定 yyyy-MM-dd HH:mm"
+                        )
+                )
+        );
+        inventory.setItem(
+                21,
+                button(
+                        Material.RECOVERY_COMPASS,
+                        "<yellow>附魔時限",
+                        List.of(
+                                "<gray>目前: <white>" + TextUtil.duration(weapon.timeoutMillis()),
+                                "<gray>點擊設定，例 7d / 24h / 0=永久"
                         )
                 )
         );
         inventory.setItem(
                 23,
                 button(
-                        Material.RECOVERY_COMPASS,
-                        "<yellow>設定附魔時限",
-                        List.of("<gray>目前: <white>" + TextUtil.duration(weapon.timeoutMillis()))
-                )
-        );
-        inventory.setItem(
-                24,
-                button(
-                        weapon.material(),
-                        "<yellow>設定材質",
-                        List.of("<gray>目前: <white>" + weapon.material().name())
-                )
-        );
-        inventory.setItem(29, button(Material.PAPER, "<aqua>顯示 UUID"));
-        inventory.setItem(
-                30,
-                button(
                         weapon.unbreakable() ? Material.OBSIDIAN : Material.COBBLESTONE,
                         "<yellow>不可破壞: " + onOff(weapon.unbreakable())
                 )
         );
         inventory.setItem(
-                31,
+                24,
                 button(
                         weapon.glow() ? Material.GLOWSTONE_DUST : Material.GUNPOWDER,
                         "<yellow>發光: " + onOff(weapon.glow())
                 )
         );
-        inventory.setItem(33, button(Material.BARRIER, "<red>刪除武器"));
+        inventory.setItem(
+                25,
+                button(
+                        Material.ITEM_FRAME,
+                        "<aqua>預覽成品",
+                        List.of("<gray>查看玩家購買後拿到的實際物品")
+                )
+        );
+        // 第三列：取得成品 / UUID
+        inventory.setItem(
+                28,
+                button(
+                        Material.CHEST_MINECART,
+                        "<green>取得成品",
+                        List.of("<gray>拿一把成品到背包（含 PDC，可測到期）")
+                )
+        );
+        inventory.setItem(29, button(Material.PAPER, "<aqua>顯示 UUID"));
+        // 底列：返回（左）｜刪除（右）
         inventory.setItem(45, button(Material.ARROW, "<yellow>返回列表"));
+        inventory.setItem(
+                53,
+                button(
+                        Material.BARRIER,
+                        "<red>刪除武器",
+                        List.of("<dark_red>刪除後無法復原")
+                )
+        );
         player.openInventory(inventory);
     }
 
@@ -178,6 +214,7 @@ public final class AdminService {
             case ADMIN_ENCHANT_ADD -> clickEnchantAdd(player, holder, slot);
             case ADMIN_ENCHANT_REMOVE -> clickEnchantRemove(player, holder, slot);
             case ADMIN_DELETE_CONFIRM -> clickDeleteConfirm(player, holder.weaponId(), slot);
+            case ADMIN_PREVIEW -> clickPreview(player, holder.weaponId(), slot);
             default -> {
             }
         }
@@ -248,9 +285,16 @@ public final class AdminService {
             case 11 -> prompt(player, weaponId, PromptType.LORE_ADD, null,
                     "<yellow>請輸入要新增的一行 Lore");
             case 12 -> openLoreRemove(player, weaponId, 0);
-            case 19 -> openEnchantAdd(player, weaponId, 0);
-            case 20 -> openEnchantRemove(player, weaponId, 0);
-            case 21 -> {
+            case 14 -> openEnchantAdd(player, weaponId, 0);
+            case 15 -> openEnchantRemove(player, weaponId, 0);
+            case 16 -> prompt(
+                    player,
+                    weaponId,
+                    PromptType.MATERIAL,
+                    null,
+                    "<yellow>請輸入材質名稱，例如 NETHERITE_SWORD"
+            );
+            case 19 -> {
                 String currency = weapon.currency().equalsIgnoreCase("VAULT")
                         ? "PLAYER_POINTS"
                         : "VAULT";
@@ -264,43 +308,38 @@ public final class AdminService {
                         "<yellow>幣種已切換為 " + currency + "，請輸入金額"
                 );
             }
-            case 22 -> prompt(
+            case 20 -> prompt(
                     player,
                     weaponId,
                     PromptType.SELL_UNTIL,
                     null,
                     "<yellow>請輸入 yyyy-MM-dd HH:mm；輸入 0 或 - 表示不限"
             );
-            case 23 -> prompt(
+            case 21 -> prompt(
                     player,
                     weaponId,
                     PromptType.TIMEOUT,
                     null,
                     "<yellow>請輸入時限，例如 7d、24h；0 表示永久"
             );
-            case 24 -> prompt(
-                    player,
-                    weaponId,
-                    PromptType.MATERIAL,
-                    null,
-                    "<yellow>請輸入材質名稱，例如 NETHERITE_SWORD"
-            );
-            case 29 -> {
-                player.closeInventory();
-                player.sendMessage(TextUtil.component("<yellow>武器 UUID: <white>" + weaponId));
-            }
-            case 30 -> {
+            case 23 -> {
                 weapon.unbreakable(!weapon.unbreakable());
                 repo.save();
                 openManage(player, weaponId);
             }
-            case 31 -> {
+            case 24 -> {
                 weapon.glow(!weapon.glow());
                 repo.save();
                 openManage(player, weaponId);
             }
-            case 33 -> openDeleteConfirm(player, weaponId);
+            case 25 -> openPreview(player, weaponId);
+            case 28 -> giveItem(player, weaponId);
+            case 29 -> {
+                player.closeInventory();
+                player.sendMessage(TextUtil.component("<yellow>武器 UUID: <white>" + weaponId));
+            }
             case 45 -> openHome(player);
+            case 53 -> openDeleteConfirm(player, weaponId);
             default -> {
             }
         }
@@ -316,6 +355,7 @@ public final class AdminService {
         int page = clampPage(requestedPage, weapon.lore().size());
         GuiHolder holder = new GuiHolder(GuiHolder.Type.ADMIN_LORE_REMOVE, weaponId, page);
         Inventory inventory = createInventory(holder, 54, "<gold>移除 Lore");
+        fillFrame(inventory);
         int start = page * PAGE_SIZE;
         int end = Math.min(start + PAGE_SIZE, weapon.lore().size());
         for (int index = start; index < end; index++) {
@@ -352,21 +392,37 @@ public final class AdminService {
             return;
         }
 
+        // 顯示全部附魔（不依材質過濾），不適用的用灰字標註但不擋
+        Material material = weapon.material() == null
+                ? Material.DIAMOND_SWORD
+                : weapon.material();
         List<Enchantment> enchantments = availableEnchantments();
+
         int page = clampPage(requestedPage, enchantments.size());
         GuiHolder holder = new GuiHolder(GuiHolder.Type.ADMIN_ENCHANT_ADD, weaponId, page);
         Inventory inventory = createInventory(holder, 54, "<gold>新增附魔");
+        fillFrame(inventory);
         int start = page * PAGE_SIZE;
         int end = Math.min(start + PAGE_SIZE, enchantments.size());
         for (int index = start; index < end; index++) {
             Enchantment enchantment = enchantments.get(index);
             NamespacedKey key = enchantment.getKey();
+            Integer current = weapon.enchantments().get(enchantmentStorageKey(key));
+            boolean applicable = enchantment.canEnchantItem(new ItemStack(material));
+            List<String> lore = new ArrayList<>();
+            lore.add("<gray>最高等級: <white>" + enchantment.getMaxLevel());
+            if (!applicable) {
+                lore.add("<dark_gray>⚠ 不適用於 " + material.name() + "（附了可能沒效果）");
+            }
+            if (current != null) {
+                lore.add("<aqua>已設定: <white>" + current + " 級（再選會覆蓋）");
+            }
             inventory.setItem(
                     index - start,
                     button(
                             Material.ENCHANTED_BOOK,
                             "<aqua>" + key,
-                            List.of("<gray>原版最高等級: <white>" + enchantment.getMaxLevel())
+                            lore
                     )
             );
         }
@@ -379,6 +435,11 @@ public final class AdminService {
             return;
         }
         if (slot < 0 || slot >= PAGE_SIZE) {
+            return;
+        }
+        WeaponDef weapon = repo.get(holder.weaponId());
+        if (weapon == null) {
+            openHome(player);
             return;
         }
         List<Enchantment> enchantments = availableEnchantments();
@@ -409,6 +470,7 @@ public final class AdminService {
         int page = clampPage(requestedPage, enchantments.size());
         GuiHolder holder = new GuiHolder(GuiHolder.Type.ADMIN_ENCHANT_REMOVE, weaponId, page);
         Inventory inventory = createInventory(holder, 54, "<gold>移除附魔");
+        fillFrame(inventory);
         int start = page * PAGE_SIZE;
         int end = Math.min(start + PAGE_SIZE, enchantments.size());
         for (int index = start; index < end; index++) {
@@ -452,6 +514,7 @@ public final class AdminService {
 
         GuiHolder holder = new GuiHolder(GuiHolder.Type.ADMIN_DELETE_CONFIRM, weaponId, 0);
         Inventory inventory = createInventory(holder, 27, "<red>確認刪除武器");
+        fillFrame(inventory);
         inventory.setItem(13, ItemService.preview(weapon));
         inventory.setItem(11, button(Material.LIME_CONCRETE, "<green>取消"));
         inventory.setItem(15, button(Material.RED_CONCRETE, "<red>確認刪除"));
@@ -468,6 +531,61 @@ public final class AdminService {
             player.sendMessage(TextUtil.component("<green>已刪除武器 <white>" + weaponId));
             openHome(player);
         }
+    }
+
+    private void openPreview(Player player, UUID weaponId) {
+        if (!checkPermission(player)) {
+            return;
+        }
+        WeaponDef weapon = repo.get(weaponId);
+        if (weapon == null) {
+            openHome(player);
+            return;
+        }
+
+        GuiHolder holder = new GuiHolder(GuiHolder.Type.ADMIN_PREVIEW, weaponId, 0);
+        Inventory inventory = createInventory(holder, 27, "<gold>預覽成品");
+        fillFrame(inventory);
+        // 中央放「購買後實際成品」（含時限 Lore、glint、PDC）
+        inventory.setItem(13, ItemService.create(weapon, player.getUniqueId()));
+        inventory.setItem(11, button(Material.ARROW, "<yellow>返回管理"));
+        player.openInventory(inventory);
+    }
+
+    private void clickPreview(Player player, UUID weaponId, int slot) {
+        if (slot == 11) {
+            openManage(player, weaponId);
+        }
+    }
+
+    private void giveItem(Player player, UUID weaponId) {
+        if (!checkPermission(player)) {
+            return;
+        }
+        WeaponDef weapon = repo.get(weaponId);
+        if (weapon == null) {
+            player.sendMessage(message("not-found", "<red>找不到該武器"));
+            openHome(player);
+            return;
+        }
+        if (!hasFreeSlot(player)) {
+            player.sendMessage(message("buy-full-inventory", "<red>背包已滿"));
+            return;
+        }
+        player.getInventory().addItem(ItemService.create(weapon, player.getUniqueId()));
+        player.sendMessage(
+                TextUtil.component("<green>已取得 <white>" + weapon.name() + " <green>成品")
+        );
+        openManage(player, weaponId);
+    }
+
+    private boolean hasFreeSlot(Player player) {
+        for (ItemStack item : player.getInventory().getStorageContents()) {
+            if (item == null || item.getType() == Material.AIR) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void prompt(
@@ -605,6 +723,29 @@ public final class AdminService {
         }
         enchantments.sort(Comparator.comparing(enchantment -> enchantment.getKey().toString()));
         return enchantments;
+    }
+
+    /** 邊框用灰色玻璃片（空白名）。 */
+    private ItemStack pane() {
+        ItemStack item = new ItemStack(Material.GRAY_STAINED_GLASS_PANE);
+        ItemMeta meta = item.getItemMeta();
+        meta.displayName(TextUtil.component(" "));
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    /** 在 GUI 外圈填上玻璃邊框（內容後放會覆蓋）。支援 54 / 27 格。 */
+    private void fillFrame(Inventory inventory) {
+        int size = inventory.getSize();
+        int rows = size / 9;
+        for (int col = 0; col < 9; col++) {
+            inventory.setItem(col, pane());
+            inventory.setItem((rows - 1) * 9 + col, pane());
+        }
+        for (int row = 1; row < rows - 1; row++) {
+            inventory.setItem(row * 9, pane());
+            inventory.setItem(row * 9 + 8, pane());
+        }
     }
 
     private String enchantmentStorageKey(NamespacedKey key) {

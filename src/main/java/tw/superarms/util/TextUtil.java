@@ -10,9 +10,11 @@ import java.util.OptionalLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.TextDecoration;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 
 public final class TextUtil {
+
     private static final MiniMessage MM = MiniMessage.miniMessage();
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern(
             "uuuu-MM-dd HH:mm"
@@ -72,7 +74,8 @@ public final class TextUtil {
     }
 
     public static Component component(String source) {
-        return MM.deserialize(mm(source));
+        // 一律關掉 italic：物品名稱/lore 若未指定樣式，遊戲預設會用斜體
+        return MM.deserialize(mm(source)).decoration(TextDecoration.ITALIC, false);
     }
 
     public static long parseDuration(String source) {

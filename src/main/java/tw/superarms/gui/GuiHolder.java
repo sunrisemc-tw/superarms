@@ -14,7 +14,8 @@ public final class GuiHolder implements InventoryHolder {
         ADMIN_LORE_REMOVE,
         ADMIN_ENCHANT_ADD,
         ADMIN_ENCHANT_REMOVE,
-        ADMIN_DELETE_CONFIRM
+        ADMIN_DELETE_CONFIRM,
+        ADMIN_PREVIEW
     }
 
     private final Type type;
