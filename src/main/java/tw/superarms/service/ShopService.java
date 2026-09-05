@@ -224,6 +224,11 @@ public final class ShopService {
         List<Component> lore = meta.lore() == null
                 ? new ArrayList<>()
                 : new ArrayList<>(meta.lore());
+        if (weapon.timeoutMillis() > 0) {
+            lore.add(TextUtil.component(
+                    "<yellow>附魔時限: <white>" + TextUtil.duration(weapon.timeoutMillis())
+            ));
+        }
         CurrencyProvider provider = economy.provider(weapon.currency());
         String price = provider == null
                 ? weapon.currency() + " " + weapon.price()

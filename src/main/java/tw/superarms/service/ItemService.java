@@ -158,7 +158,10 @@ public final class ItemService {
                 meta.addEnchant(enchantment, entry.getValue(), true);
             }
         }
-        if (weapon.glow()) {
+        // 有真附魔時：讓附魔自然顯示（hover 看得到附魔清單）且自然 glint。
+        // 只有「glow=true 但沒任何附魔」時，才用 LURE 偽 glint 並藏起來。
+        boolean hasRealEnchant = !weapon.enchantments().isEmpty();
+        if (weapon.glow() && !hasRealEnchant) {
             meta.addEnchant(Enchantment.LURE, 1, true);
             meta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
         }
