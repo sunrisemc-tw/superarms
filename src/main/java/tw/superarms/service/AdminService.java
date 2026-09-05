@@ -28,6 +28,29 @@ public final class AdminService {
 
     private static final int PAGE_SIZE = 45;
 
+    /** 6 列 GUI 內容區每頁 4列 x 7格 = 28（跳過外圈玻璃框）。 */
+    private static final int CONTENT_PAGE_SIZE = 28;
+
+    /** 把內容序號 n 對映到 54 格 GUI 的 slot（內容區跳過左右框）。 */
+    private static int contentSlot(int n) {
+        int row = n / 7;
+        int col = n % 7;
+        return (row + 1) * 9 + (col + 1);
+    }
+
+    /** 把 slot 對映回內容序號；若 slot 在邊框/底列則回 -1。 */
+    private static int contentIndex(int slot) {
+        if (slot < 0 || slot >= 45) {
+            return -1;
+        }
+        int row = slot / 9;
+        int col = slot % 9;
+        if (row == 0 || row == 5 || col == 0 || col == 8) {
+            return -1;
+        }
+        return (row - 1) * 7 + (col - 1);
+    }
+
     private enum PromptType {
         RENAME,
         LORE_ADD,
@@ -60,7 +83,7 @@ public final class AdminService {
         }
 
         List<WeaponDef> weapons = new ArrayList<>(repo.all());
-        int page = clampPage(requestedPage, weapons.size());
+        int page = clampPage(requestedPage, weapons.size(), CONTENT_PAGE_SIZE);
         GuiHolder holder = new GuiHolder(GuiHolder.Type.ADMIN_HOME, null, page);
         Inventory inventory = createInventory(
                 holder,
@@ -69,12 +92,13 @@ public final class AdminService {
         );
         fillFrame(inventory);
 
-        int start = page * PAGE_SIZE;
-        int end = Math.min(start + PAGE_SIZE, weapons.size());
+        int start = page * CONTENT_PAGE_SIZE;
+        int end = Math.min(start + CONTENT_PAGE_SIZE, weapons.size());
         for (int index = start; index < end; index++) {
-            inventory.setItem(index - start, ItemService.preview(weapons.get(index)));
+            inventory.setItem(contentSlot(index - start), ItemService.preview(weapons.get(index)));
         }
 
+        // 底列：上一頁 / 新增武器 / 下一頁
         if (page > 0) {
             inventory.setItem(45, button(Material.ARROW, "<yellow>上一頁"));
         }
@@ -261,12 +285,13 @@ public final class AdminService {
             openHome(player, page + 1);
             return;
         }
-        if (slot < 0 || slot >= PAGE_SIZE) {
+        int content = contentIndex(slot);
+        if (content < 0) {
             return;
         }
 
         List<WeaponDef> weapons = new ArrayList<>(repo.all());
-        int index = page * PAGE_SIZE + slot;
+        int index = page * CONTENT_PAGE_SIZE + content;
         if (index < weapons.size()) {
             openManage(player, weapons.get(index).id());
         }
@@ -352,15 +377,15 @@ public final class AdminService {
             return;
         }
 
-        int page = clampPage(requestedPage, weapon.lore().size());
+        int page = clampPage(requestedPage, weapon.lore().size(), CONTENT_PAGE_SIZE);
         GuiHolder holder = new GuiHolder(GuiHolder.Type.ADMIN_LORE_REMOVE, weaponId, page);
         Inventory inventory = createInventory(holder, 54, "<gold>移除 Lore");
         fillFrame(inventory);
-        int start = page * PAGE_SIZE;
-        int end = Math.min(start + PAGE_SIZE, weapon.lore().size());
+        int start = page * CONTENT_PAGE_SIZE;
+        int end = Math.min(start + CONTENT_PAGE_SIZE, weapon.lore().size());
         for (int index = start; index < end; index++) {
             inventory.setItem(
-                    index - start,
+                    contentSlot(index - start),
                     button(Material.PAPER, "<red>刪除第 " + (index + 1) + " 行",
                             List.of(weapon.lore().get(index)))
             );
@@ -373,11 +398,16 @@ public final class AdminService {
         if (handlePagedBack(player, holder, slot, this::openLoreRemove)) {
             return;
         }
-        WeaponDef weapon = repo.get(holder.weaponId());
-        if (weapon == null || slot < 0 || slot >= PAGE_SIZE) {
+        int content = contentIndex(slot);
+        if (content < 0) {
             return;
         }
-        int index = holder.page() * PAGE_SIZE + slot;
+        WeaponDef weapon = repo.get(holder.weaponId());
+        if (weapon == null) {
+            openHome(player);
+            return;
+        }
+        int index = holder.page() * CONTENT_PAGE_SIZE + content;
         if (index < weapon.lore().size()) {
             weapon.lore().remove(index);
             repo.save();
@@ -398,12 +428,12 @@ public final class AdminService {
                 : weapon.material();
         List<Enchantment> enchantments = availableEnchantments();
 
-        int page = clampPage(requestedPage, enchantments.size());
+        int page = clampPage(requestedPage, enchantments.size(), CONTENT_PAGE_SIZE);
         GuiHolder holder = new GuiHolder(GuiHolder.Type.ADMIN_ENCHANT_ADD, weaponId, page);
         Inventory inventory = createInventory(holder, 54, "<gold>新增附魔");
         fillFrame(inventory);
-        int start = page * PAGE_SIZE;
-        int end = Math.min(start + PAGE_SIZE, enchantments.size());
+        int start = page * CONTENT_PAGE_SIZE;
+        int end = Math.min(start + CONTENT_PAGE_SIZE, enchantments.size());
         for (int index = start; index < end; index++) {
             Enchantment enchantment = enchantments.get(index);
             NamespacedKey key = enchantment.getKey();
@@ -418,7 +448,7 @@ public final class AdminService {
                 lore.add("<aqua>已設定: <white>" + current + " 級（再選會覆蓋）");
             }
             inventory.setItem(
-                    index - start,
+                    contentSlot(index - start),
                     button(
                             Material.ENCHANTED_BOOK,
                             "<aqua>" + key,
@@ -434,7 +464,8 @@ public final class AdminService {
         if (handlePagedBack(player, holder, slot, this::openEnchantAdd)) {
             return;
         }
-        if (slot < 0 || slot >= PAGE_SIZE) {
+        int content = contentIndex(slot);
+        if (content < 0) {
             return;
         }
         WeaponDef weapon = repo.get(holder.weaponId());
@@ -443,7 +474,7 @@ public final class AdminService {
             return;
         }
         List<Enchantment> enchantments = availableEnchantments();
-        int index = holder.page() * PAGE_SIZE + slot;
+        int index = holder.page() * CONTENT_PAGE_SIZE + content;
         if (index >= enchantments.size()) {
             return;
         }
@@ -467,16 +498,16 @@ public final class AdminService {
         List<Map.Entry<String, Integer>> enchantments = new ArrayList<>(
                 weapon.enchantments().entrySet()
         );
-        int page = clampPage(requestedPage, enchantments.size());
+        int page = clampPage(requestedPage, enchantments.size(), CONTENT_PAGE_SIZE);
         GuiHolder holder = new GuiHolder(GuiHolder.Type.ADMIN_ENCHANT_REMOVE, weaponId, page);
         Inventory inventory = createInventory(holder, 54, "<gold>移除附魔");
         fillFrame(inventory);
-        int start = page * PAGE_SIZE;
-        int end = Math.min(start + PAGE_SIZE, enchantments.size());
+        int start = page * CONTENT_PAGE_SIZE;
+        int end = Math.min(start + CONTENT_PAGE_SIZE, enchantments.size());
         for (int index = start; index < end; index++) {
             Map.Entry<String, Integer> entry = enchantments.get(index);
             inventory.setItem(
-                    index - start,
+                    contentSlot(index - start),
                     button(
                             Material.ENCHANTED_BOOK,
                             "<red>移除 " + entry.getKey(),
@@ -492,12 +523,17 @@ public final class AdminService {
         if (handlePagedBack(player, holder, slot, this::openEnchantRemove)) {
             return;
         }
+        int content = contentIndex(slot);
+        if (content < 0) {
+            return;
+        }
         WeaponDef weapon = repo.get(holder.weaponId());
-        if (weapon == null || slot < 0 || slot >= PAGE_SIZE) {
+        if (weapon == null) {
+            openHome(player);
             return;
         }
         List<String> keys = new ArrayList<>(weapon.enchantments().keySet());
-        int index = holder.page() * PAGE_SIZE + slot;
+        int index = holder.page() * CONTENT_PAGE_SIZE + content;
         if (index < keys.size()) {
             weapon.enchantments().remove(keys.get(index));
             repo.save();
@@ -787,7 +823,11 @@ public final class AdminService {
     }
 
     private int clampPage(int requestedPage, int itemCount) {
-        int lastPage = itemCount == 0 ? 0 : (itemCount - 1) / PAGE_SIZE;
+        return clampPage(requestedPage, itemCount, PAGE_SIZE);
+    }
+
+    private int clampPage(int requestedPage, int itemCount, int pageSize) {
+        int lastPage = itemCount == 0 ? 0 : (itemCount - 1) / pageSize;
         return Math.max(0, Math.min(requestedPage, lastPage));
     }
 

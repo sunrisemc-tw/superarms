@@ -43,7 +43,7 @@ public final class EconomyService {
 
                 @Override
                 public String format(double amount) {
-                    return (int) amount + " points";
+                    return (int) amount + " 日幣";
                 }
             };
         }
