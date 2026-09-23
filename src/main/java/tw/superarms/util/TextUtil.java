@@ -12,10 +12,13 @@ import java.util.regex.Pattern;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.TextDecoration;
 import net.kyori.adventure.text.minimessage.MiniMessage;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 
 public final class TextUtil {
 
     private static final MiniMessage MM = MiniMessage.miniMessage();
+    private static final PlainTextComponentSerializer PLAIN_TEXT =
+            PlainTextComponentSerializer.plainText();
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern(
             "uuuu-MM-dd HH:mm"
     ).withResolverStyle(ResolverStyle.STRICT);
@@ -76,6 +79,27 @@ public final class TextUtil {
     public static Component component(String source) {
         // 一律關掉 italic：物品名稱/lore 若未指定樣式，遊戲預設會用斜體
         return MM.deserialize(mm(source)).decoration(TextDecoration.ITALIC, false);
+    }
+
+    /**
+     * 把 Component 轉回可存進 weapons.yml 的 MiniMessage 字串（供「匯入背包物品」用）。
+     * 會先移除斜體，讓 TextUtil.component 再解析時樣式一致；MiniMessage 序列化器會自動逸出尖括號。
+     */
+    public static String serialize(Component source) {
+        if (source == null) {
+            return "";
+        }
+        // 先在根節點把斜體設回 NOT_SET，再移除子節點序列化出的 <!italic>：
+        // weapons.yml 不需要這個 tag（TextUtil.component 一律會關掉斜體）。
+        String value = MM.serialize(
+                source.decoration(TextDecoration.ITALIC, TextDecoration.State.NOT_SET)
+        );
+        return value.replace("<!italic>", "");
+    }
+
+    /** 取純文字（用於判斷某行是不是系統標記，例如「附魔已失效」）。 */
+    public static String plain(Component source) {
+        return source == null ? "" : PLAIN_TEXT.serialize(source);
     }
 
     public static long parseDuration(String source) {

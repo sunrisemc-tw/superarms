@@ -16,12 +16,14 @@ import org.bukkit.Registry;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import tw.superarms.SuperArmsPlugin;
 import tw.superarms.data.WeaponDef;
 import tw.superarms.data.WeaponRepository;
 import tw.superarms.gui.GuiHolder;
+import tw.superarms.util.EnchantNames;
 import tw.superarms.util.TextUtil;
 
 public final class AdminService {
@@ -30,6 +32,21 @@ public final class AdminService {
 
     /** 6 列 GUI 內容區每頁 4列 x 7格 = 28（跳過外圈玻璃框）。 */
     private static final int CONTENT_PAGE_SIZE = 28;
+
+    /** 玩家背包中可當匯入來源的格位：0-35 主背包 + 40 副手。 */
+    private static final int[] IMPORT_SLOTS = buildImportSlots();
+
+    private static int[] buildImportSlots() {
+        int[] slots = new int[37];
+        for (int index = 0; index < 36; index++) {
+            slots[index] = index;
+        }
+        slots[36] = 40;
+        return slots;
+    }
+
+    /** 本系統自己的 Lore 標記：匯入時要跳過，避免把「已失效」帶進新模板。 */
+    private static final List<String> SYSTEM_LORE_MARKERS = List.of("附魔有效至", "附魔已失效");
 
     /** 把內容序號 n 對映到 54 格 GUI 的 slot（內容區跳過左右框）。 */
     private static int contentSlot(int n) {
@@ -103,6 +120,14 @@ public final class AdminService {
             inventory.setItem(45, button(Material.ARROW, "<yellow>上一頁"));
         }
         inventory.setItem(49, button(Material.EMERALD, "<green>新增武器"));
+        inventory.setItem(
+                51,
+                button(
+                        Material.HOPPER,
+                        "<aqua>匯入背包武器",
+                        List.of("<gray>從自己背包挑一件物品，直接變成新特武模板")
+                )
+        );
         if (end < weapons.size()) {
             inventory.setItem(53, button(Material.ARROW, "<yellow>下一頁"));
         }
@@ -132,7 +157,19 @@ public final class AdminService {
         inventory.setItem(11, button(Material.WRITABLE_BOOK, "<green>新增 Lore"));
         inventory.setItem(12, button(Material.BOOK, "<red>移除 Lore"));
         inventory.setItem(14, button(Material.ENCHANTED_BOOK, "<green>新增附魔"));
-        inventory.setItem(15, button(Material.GRINDSTONE, "<red>移除附魔"));
+        List<String> enchantLore = new ArrayList<>();
+        if (weapon.enchantments().isEmpty()) {
+            enchantLore.add("<gray>目前沒有附魔");
+        } else {
+            enchantLore.add("<gray>目前已設定：");
+            for (Map.Entry<String, Integer> entry : weapon.enchantments().entrySet()) {
+                enchantLore.add(
+                        "<dark_gray>・<white>" + EnchantNames.zh(entry.getKey())
+                                + " <gray>" + entry.getValue() + " 級"
+                );
+            }
+        }
+        inventory.setItem(15, button(Material.GRINDSTONE, "<red>移除附魔", enchantLore));
         inventory.setItem(
                 16,
                 button(
@@ -212,6 +249,18 @@ public final class AdminService {
                 )
         );
         inventory.setItem(29, button(Material.PAPER, "<aqua>顯示 UUID"));
+        inventory.setItem(
+                34,
+                button(
+                        Material.ANVIL,
+                        "<aqua>從手上匯入覆蓋",
+                        List.of(
+                                "<gray>把主手拿著的物品外觀覆蓋到這把特武",
+                                "<gray>（材質 / 名稱 / Lore / 附魔 / 發光）",
+                                "<dark_gray>價格、時限、販售截止不會被改"
+                        )
+                )
+        );
         // 底列：返回（左）｜刪除（右）
         inventory.setItem(45, button(Material.ARROW, "<yellow>返回列表"));
         inventory.setItem(
@@ -239,6 +288,7 @@ public final class AdminService {
             case ADMIN_ENCHANT_REMOVE -> clickEnchantRemove(player, holder, slot);
             case ADMIN_DELETE_CONFIRM -> clickDeleteConfirm(player, holder.weaponId(), slot);
             case ADMIN_PREVIEW -> clickPreview(player, holder.weaponId(), slot);
+            case ADMIN_IMPORT -> clickImport(player, holder, slot);
             default -> {
             }
         }
@@ -283,6 +333,10 @@ public final class AdminService {
         }
         if (slot == 53) {
             openHome(player, page + 1);
+            return;
+        }
+        if (slot == 51) {
+            openImport(player);
             return;
         }
         int content = contentIndex(slot);
@@ -359,6 +413,7 @@ public final class AdminService {
             }
             case 25 -> openPreview(player, weaponId);
             case 28 -> giveItem(player, weaponId);
+            case 34 -> importFromMainHand(player, weaponId);
             case 29 -> {
                 player.closeInventory();
                 player.sendMessage(TextUtil.component("<yellow>武器 UUID: <white>" + weaponId));
@@ -447,11 +502,12 @@ public final class AdminService {
             if (current != null) {
                 lore.add("<aqua>已設定: <white>" + current + " 級（再選會覆蓋）");
             }
+            lore.add("<dark_gray>id: " + key);
             inventory.setItem(
                     contentSlot(index - start),
                     button(
                             Material.ENCHANTED_BOOK,
-                            "<aqua>" + key,
+                            "<aqua>" + EnchantNames.zh(key.toString()),
                             lore
                     )
             );
@@ -484,7 +540,7 @@ public final class AdminService {
                 holder.weaponId(),
                 PromptType.ENCHANT_LEVEL,
                 key,
-                "<yellow>請輸入 " + key + " 的附魔等級"
+                "<yellow>請輸入 " + EnchantNames.zh(key) + " <dark_gray>(" + key + ") <yellow>的附魔等級"
         );
     }
 
@@ -510,8 +566,11 @@ public final class AdminService {
                     contentSlot(index - start),
                     button(
                             Material.ENCHANTED_BOOK,
-                            "<red>移除 " + entry.getKey(),
-                            List.of("<gray>目前等級: <white>" + entry.getValue())
+                            "<red>移除 " + EnchantNames.zh(entry.getKey()),
+                            List.of(
+                                    "<gray>目前等級: <white>" + entry.getValue(),
+                                    "<dark_gray>id: " + entry.getKey()
+                            )
                     )
             );
         }
@@ -592,6 +651,255 @@ public final class AdminService {
         if (slot == 11) {
             openManage(player, weaponId);
         }
+    }
+
+    // ==================== 匯入背包物品 ====================
+
+    /**
+     * 列出玩家背包（0-35 主背包 + 40 副手）中非空的物品，讓 admin 點選匯入成新特武模板。
+     * GUI 開著時 GameListener 會擋掉整個 view 的點擊，所以背包內容不會被中途改動。
+     */
+    public void openImport(Player player) {
+        openImport(player, 0);
+    }
+
+    public void openImport(Player player, int requestedPage) {
+        if (!checkPermission(player)) {
+            return;
+        }
+
+        List<Integer> sources = importSources(player);
+        int page = clampPage(requestedPage, sources.size(), CONTENT_PAGE_SIZE);
+        GuiHolder holder = new GuiHolder(GuiHolder.Type.ADMIN_IMPORT, null, page);
+        Inventory inventory = createInventory(holder, 54, "<gold>匯入背包武器");
+        fillFrame(inventory);
+
+        int start = page * CONTENT_PAGE_SIZE;
+        int end = Math.min(start + CONTENT_PAGE_SIZE, sources.size());
+        for (int index = start; index < end; index++) {
+            int inventorySlot = sources.get(index);
+            ItemStack source = player.getInventory().getItem(inventorySlot);
+            if (source == null || source.getType().isAir()) {
+                continue;
+            }
+            ItemStack icon = source.clone();
+            ItemMeta meta = icon.getItemMeta();
+            if (meta != null) {
+                List<Component> lore = meta.lore() == null
+                        ? new ArrayList<>()
+                        : new ArrayList<>(meta.lore());
+                lore.add(TextUtil.component(
+                        "<dark_gray>來源: " + importSlotName(inventorySlot)
+                ));
+                lore.add(TextUtil.component("<yellow>▶ 點擊匯入為新特武"));
+                meta.lore(lore);
+                icon.setItemMeta(meta);
+            }
+            inventory.setItem(contentSlot(index - start), icon);
+        }
+
+        if (sources.isEmpty()) {
+            inventory.setItem(
+                    22,
+                    button(Material.BARRIER, "<red>背包沒有可匯入的物品")
+            );
+        }
+
+        if (page > 0) {
+            inventory.setItem(45, button(Material.ARROW, "<yellow>上一頁"));
+        }
+        inventory.setItem(49, button(Material.ARROW, "<yellow>返回列表"));
+        if (end < sources.size()) {
+            inventory.setItem(53, button(Material.ARROW, "<yellow>下一頁"));
+        }
+        player.openInventory(inventory);
+    }
+
+    private void clickImport(Player player, GuiHolder holder, int slot) {
+        if (slot == 45 && holder.page() > 0) {
+            openImport(player, holder.page() - 1);
+            return;
+        }
+        if (slot == 49) {
+            openHome(player);
+            return;
+        }
+        if (slot == 53) {
+            openImport(player, holder.page() + 1);
+            return;
+        }
+        int content = contentIndex(slot);
+        if (content < 0) {
+            return;
+        }
+
+        List<Integer> sources = importSources(player);
+        int index = holder.page() * CONTENT_PAGE_SIZE + content;
+        if (index >= sources.size()) {
+            return;
+        }
+        importAsNewWeapon(player, player.getInventory().getItem(sources.get(index)), true);
+    }
+
+    /**
+     * 指令版（`/superarms import`）：把主手物品匯入成新模板，不開 GUI。
+     * 給 console / 基岩版 / 腳本化流程用；GUI 版走 openImport。
+     */
+    public void importMainHandAsNew(Player player) {
+        if (!checkPermission(player)) {
+            return;
+        }
+        ItemStack source = player.getInventory().getItemInMainHand();
+        if (source == null || source.getType().isAir()) {
+            player.sendMessage(TextUtil.component("<red>主手沒有物品，請把要匯入的物品拿在手上"));
+            return;
+        }
+        importAsNewWeapon(player, source, false);
+    }
+
+    /** 背包中非空的來源格（依序）。 */
+    private List<Integer> importSources(Player player) {
+        List<Integer> slots = new ArrayList<>();
+        for (int slot : IMPORT_SLOTS) {
+            ItemStack item = player.getInventory().getItem(slot);
+            if (item != null && !item.getType().isAir()) {
+                slots.add(slot);
+            }
+        }
+        return slots;
+    }
+
+    private String importSlotName(int slot) {
+        return slot == 40 ? "副手" : "第 " + (slot + 1) + " 格";
+    }
+
+    private void importAsNewWeapon(Player player, ItemStack source, boolean openManageAfter) {
+        if (source == null || source.getType().isAir()) {
+            player.sendMessage(TextUtil.component("<red>該格已經沒有物品了"));
+            openImport(player);
+            return;
+        }
+
+        boolean wasSuperArmsItem = ItemService.def(source) != null;
+        WeaponDef weapon = repo.create("<gold>新特武");
+        String summary = applyImportedAppearance(weapon, source, false);
+        repo.save();
+
+        player.sendMessage(
+                TextUtil.component("<green>已匯入新特武：<white>" + summary)
+        );
+        player.sendMessage(
+                TextUtil.component("<gray>UUID: <white>" + weapon.id()
+                        + " <gray>｜價格/時限預設 0（免費、永久）")
+        );
+        if (wasSuperArmsItem) {
+            player.sendMessage(
+                    TextUtil.component("<yellow>注意：該物品本身已是特武成品，已忽略它的時限標記行。")
+            );
+        }
+        if (openManageAfter) {
+            openManage(player, weapon.id());
+        }
+    }
+
+    /** 「從手上匯入覆蓋」：把主手物品的外觀套到既有模板（價格/時限/販售截止不變）。 */
+    private void importFromMainHand(Player player, UUID weaponId) {
+        WeaponDef weapon = repo.get(weaponId);
+        if (weapon == null) {
+            openHome(player);
+            return;
+        }
+        ItemStack source = player.getInventory().getItemInMainHand();
+        if (source == null || source.getType().isAir()) {
+            player.sendMessage(TextUtil.component("<red>主手沒有物品，請把要匯入的物品拿在手上再試"));
+            openManage(player, weaponId);
+            return;
+        }
+
+        String summary = applyImportedAppearance(weapon, source, true);
+        repo.save();
+        player.sendMessage(TextUtil.component("<green>已用主手物品覆蓋此特武：<white>" + summary));
+        openManage(player, weaponId);
+    }
+
+    /**
+     * 把物品的外觀欄位覆蓋到模板：材質 / 名稱 / Lore / 附魔 / 自訂模型資料 / 不可破壞 / 發光。
+     * 商業欄位（價格、幣種、販售截止、時限、開關）不動。
+     *
+     * @param keepNameIfAbsent true 時物品沒有自訂名稱就保留模板原本的名稱
+     * @return 一行摘要，例如「材質 DIAMOND_SWORD、2 行 Lore、4 個附魔」
+     */
+    private String applyImportedAppearance(
+            WeaponDef weapon,
+            ItemStack source,
+            boolean keepNameIfAbsent
+    ) {
+        weapon.material(source.getType());
+        weapon.lore().clear();
+        weapon.enchantments().clear();
+
+        ItemMeta meta = source.getItemMeta();
+        if (meta != null) {
+            if (meta.hasDisplayName()) {
+                weapon.name(TextUtil.serialize(meta.displayName()));
+            } else if (!keepNameIfAbsent) {
+                weapon.name("<white>" + prettyMaterial(source.getType()));
+            }
+            weapon.unbreakable(meta.isUnbreakable());
+            weapon.customModelData(
+                    meta.hasCustomModelData() ? meta.getCustomModelData() : null
+            );
+
+            List<Component> lore = meta.lore();
+            if (lore != null) {
+                for (Component line : lore) {
+                    if (isSystemLore(line)) {
+                        continue;
+                    }
+                    weapon.lore().add(TextUtil.serialize(line));
+                }
+            }
+
+            // 本系統的假光澤 = LURE 1 + HIDE_ENCHANTS，匯入時視為「發光」而非一個附魔。
+            boolean fakeGlow = meta.getItemFlags().contains(ItemFlag.HIDE_ENCHANTS);
+            for (Map.Entry<Enchantment, Integer> entry : meta.getEnchants().entrySet()) {
+                String key = enchantmentStorageKey(entry.getKey().getKey());
+                if (fakeGlow && key.equals("LURE") && entry.getValue() <= 1) {
+                    continue;
+                }
+                weapon.enchantments().put(key, entry.getValue());
+            }
+            weapon.glow(!weapon.enchantments().isEmpty() || fakeGlow);
+        }
+
+        return "材質 " + source.getType().name()
+                + "、" + weapon.lore().size() + " 行 Lore"
+                + "、" + weapon.enchantments().size() + " 個附魔";
+    }
+
+    private boolean isSystemLore(Component line) {
+        String plain = TextUtil.plain(line);
+        for (String marker : SYSTEM_LORE_MARKERS) {
+            if (plain.contains(marker)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** NETHERITE_SWORD → Netherite Sword（物品沒有自訂名稱時的預設顯示名）。 */
+    private String prettyMaterial(Material material) {
+        StringBuilder builder = new StringBuilder();
+        for (String word : material.name().toLowerCase(Locale.ROOT).split("_")) {
+            if (word.isEmpty()) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append(' ');
+            }
+            builder.append(Character.toUpperCase(word.charAt(0))).append(word.substring(1));
+        }
+        return builder.toString();
     }
 
     private void giveItem(Player player, UUID weaponId) {

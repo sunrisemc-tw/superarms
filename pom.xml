@@ -6,7 +6,7 @@
 
     <groupId>tw.superarms</groupId>
     <artifactId>superarms</artifactId>
-    <version>0.1.0</version>
+    <version>0.2.0</version>
     <name>SuperArms</name>
     <description>特武系統：模板定義 / 附魔時限 / 商店（Folia / Canvas）。</description>
 

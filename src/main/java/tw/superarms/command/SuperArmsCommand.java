@@ -76,6 +76,10 @@ public final class SuperArmsCommand implements CommandExecutor, TabCompleter {
             handleArms(sender, arguments);
             return true;
         }
+        if (subcommand.equals("import")) {
+            handleImport(sender);
+            return true;
+        }
 
         openWeapon(sender, arguments[0]);
         return true;
@@ -149,6 +153,14 @@ public final class SuperArmsCommand implements CommandExecutor, TabCompleter {
         player.getInventory().addItem(ItemService.preview(weapon));
     }
 
+    private void handleImport(CommandSender sender) {
+        if (!(sender instanceof Player player) || !isAdmin(player)) {
+            sendNoPermission(sender);
+            return;
+        }
+        admin.importMainHandAsNew(player);
+    }
+
     private void openWeapon(CommandSender sender, String idValue) {
         if (!(sender instanceof Player player) || !isAdmin(player)) {
             sendNoPermission(sender);
@@ -190,7 +202,7 @@ public final class SuperArmsCommand implements CommandExecutor, TabCompleter {
             String[] arguments
     ) {
         if (arguments.length == 1) {
-            return Arrays.asList("shop", "buy", "list", "reload", "arms");
+            return Arrays.asList("shop", "buy", "list", "reload", "arms", "import");
         }
         if (arguments.length == 2
                 && (arguments[0].equalsIgnoreCase("buy")

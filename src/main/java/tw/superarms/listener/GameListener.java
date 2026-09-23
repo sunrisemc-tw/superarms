@@ -68,7 +68,8 @@ public final class GameListener implements Listener {
                     ADMIN_ENCHANT_ADD,
                     ADMIN_ENCHANT_REMOVE,
                     ADMIN_DELETE_CONFIRM,
-                    ADMIN_PREVIEW -> admin.click(player, holder, slot);
+                    ADMIN_PREVIEW,
+                    ADMIN_IMPORT -> admin.click(player, holder, slot);
         }
     }
 
