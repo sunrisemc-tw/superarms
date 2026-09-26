@@ -295,4 +295,41 @@ weapon-expired-sell: "<gray>該武器已停止販售"
 7. **M6 打磨**：config/messages 抽離、音效、list 格式、（bStats/update checker 視需要）。
 
 ---
+
+## 15. v0.2 標籤簽章（防竄改，2026-09-26）
+
+### 問題
+原設計（§D4/§D6/§D12）把「有效性」完全建立在物品自身的 PDC 上、且 **fail-open**：
+- 到期只拔「模板定義內」的附魔 → 玩家塞進來的定義外附魔永久存活。
+- `def` / `expires_at` 被改或刪 → rewrite 直接跳過 → 特武變永久。
+- 用 lore 文字「附魔已失效」當狀態 → 手動加一行就能讓到期 rewrite 提前 return、不拔附魔。
+- PDC 無簽章 → 任何能改 NBT 的途徑（NBT 編輯器外掛、`/data`、創造/管理員）都能繞過。
+
+### 新語意
+**標籤是唯一依據且防竄改：標籤沒被動 → 一律照規則走；標籤被動過 → fail-closed 直接失效。**
+
+### 變更
+1. **簽章**：`TagSigner` 以伺服器密鑰對 `def｜expires_at｜owner｜boughtAt｜expired` 做 HMAC-SHA256。
+   密鑰存 `plugins/SuperArms/tag.key`（首次啟動自動生成，**不進 jar、不寫 config**；遺失＝所有已簽章特武失效 → 務必備份）。
+   PDC 新增 `tag_ver`(INT=2)、`sig`(STRING)、`expired`(INT)。
+2. **到期拔「全部」附魔**（不再只拔定義內的），含偽 glint 來源 LURE。
+3. **fail-closed**：`TagVerdict` = `UNTAGGED` / `VALID` / `LEGACY` / `TAMPERED`。簽章不符或指向不存在的模板 → `TAMPERED` → 立刻拔光附魔。
+4. **狀態改用 PDC `expired`**，不再依賴 lore 文字。
+5. **一次性遷移**：舊（v0.1）物品為 `LEGACY`（有 `def`、無簽章），首次被掃到時補簽章（保留原 `expires_at`），不會誤失效。
+6. **決策抽純函式** `ExpiryPolicy.decide(...)` → 可離線測試（`ExpiryPolicyTest`）。
+
+### 仍然守不住的邊界
+`def` 標籤被**整個拔掉** → 物品失去識別，變回普通物品（附魔仍在）。要堵需「伺服器端實例登記表 + 背包監看」。
+另外到期偵測仍只涵蓋「玩家背包/裝備 + 主手」，**箱子/潛影盒/終界箱內不會被 rewrite**。
+
+### 行為變更（刻意）
+- 舊物品若 `def` 指向 **已不存在的模板** → 判 `TAMPERED`，首次被掃到時拔光附魔（舊版是「永遠不到期」）。
+- `tag.key` 遺失/重建 → 所有已簽章特武判為遭竄改而失效。
+
+### 驗證
+- `mvn test`：29 tests，0 failures（新增 `TagSignerTest` 9、`ExpiryPolicyTest` 9）。
+- 真 Folia 26.2 伺服器端到端（一次性 harness 外掛跑真實 `ItemService`/`ExpiryPolicy`）：**22/22 PASS**
+  （涵蓋：新建/竄改到期/竄改 def/加定義外附魔後拔光/遷移/永久武器/改名不影響/拔標籤）。
+
+---
 *End of spec v0.1*

@@ -16,35 +16,51 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import tw.superarms.SuperArmsPlugin;
+import tw.superarms.data.TagVerdict;
 import tw.superarms.data.WeaponDef;
+import tw.superarms.util.TagSigner;
 import tw.superarms.util.TextUtil;
 
+/**
+ * 特武物品的標籤管理。
+ *
+ * <p>標籤（PDC）就是特武的唯一身分：只要標籤在且簽章正確，這件物品就是特武，
+ * 其餘欄位（名稱、lore、額外附魔…）不管被怎麼改都照規則走；
+ * 標籤被動過（簽章不符）則 fail-closed 直接失效。
+ */
 public final class ItemService {
 
-    public static final NamespacedKey DEF = new NamespacedKey(
-            SuperArmsPlugin.getInstance(),
-            "def"
-    );
-    public static final NamespacedKey EXP = new NamespacedKey(
-            SuperArmsPlugin.getInstance(),
-            "expires_at"
-    );
-    public static final NamespacedKey OWNER = new NamespacedKey(
-            SuperArmsPlugin.getInstance(),
-            "owner"
-    );
-    public static final NamespacedKey BOUGHT = new NamespacedKey(
-            SuperArmsPlugin.getInstance(),
-            "boughtAt"
-    );
+    /** 目前標籤版本。v1 = 只有 def/expires_at/owner/boughtAt；v2 = 追加 sig/tag_ver/expired。 */
+    public static final int TAG_VERSION = 2;
+
+    public static final NamespacedKey DEF = key("def");
+    public static final NamespacedKey EXP = key("expires_at");
+    public static final NamespacedKey OWNER = key("owner");
+    public static final NamespacedKey BOUGHT = key("boughtAt");
+    public static final NamespacedKey SIG = key("sig");
+    public static final NamespacedKey TAG_VER = key("tag_ver");
+    public static final NamespacedKey EXPIRED = key("expired");
 
     private static final String VALID_UNTIL_TEXT = "附魔有效至";
     private static final String EXPIRED_TEXT = "附魔已失效";
     private static final PlainTextComponentSerializer PLAIN_TEXT =
             PlainTextComponentSerializer.plainText();
 
+    private static String secret = "";
+
     private ItemService() {
     }
+
+    /** 由插件 onEnable 注入簽章密鑰。 */
+    public static void configure(String tagSecret) {
+        secret = tagSecret == null ? "" : tagSecret;
+    }
+
+    private static NamespacedKey key(String value) {
+        return new NamespacedKey(SuperArmsPlugin.getInstance(), value);
+    }
+
+    // ---------------------------------------------------------------- 建立
 
     public static ItemStack create(WeaponDef weapon, UUID owner) {
         long boughtAt = System.currentTimeMillis();
@@ -56,8 +72,10 @@ public final class ItemService {
         PersistentDataContainer pdc = meta.getPersistentDataContainer();
         pdc.set(DEF, PersistentDataType.STRING, weapon.id().toString());
         pdc.set(EXP, PersistentDataType.LONG, expiresAt);
-        pdc.set(OWNER, PersistentDataType.STRING, owner.toString());
+        pdc.set(OWNER, PersistentDataType.STRING, owner == null ? "" : owner.toString());
         pdc.set(BOUGHT, PersistentDataType.LONG, boughtAt);
+        pdc.set(EXPIRED, PersistentDataType.INTEGER, 0);
+        applySignature(meta);
         item.setItemMeta(meta);
         return item;
     }
@@ -66,13 +84,20 @@ public final class ItemService {
         return render(weapon, 0);
     }
 
-    public static UUID def(ItemStack item) {
+    // ---------------------------------------------------------------- 讀取
+
+    /** 原始 def 字串（未經解析）。 */
+    public static String defString(ItemStack item) {
         if (item == null || !item.hasItemMeta()) {
             return null;
         }
-        String value = item.getItemMeta()
+        return item.getItemMeta()
                 .getPersistentDataContainer()
                 .get(DEF, PersistentDataType.STRING);
+    }
+
+    public static UUID def(ItemStack item) {
+        String value = defString(item);
         try {
             return value == null ? null : UUID.fromString(value);
         } catch (IllegalArgumentException exception) {
@@ -90,32 +115,103 @@ public final class ItemService {
         return value == null ? 0 : value;
     }
 
-    public static ItemStack expire(ItemStack source, WeaponDef weapon) {
+    /** 是否已標記失效（0 = 未失效）。 */
+    public static int expired(ItemStack item) {
+        if (item == null || !item.hasItemMeta()) {
+            return 0;
+        }
+        Integer value = item.getItemMeta()
+                .getPersistentDataContainer()
+                .get(EXPIRED, PersistentDataType.INTEGER);
+        return value == null ? 0 : value;
+    }
+
+    /** 驗證標籤狀態。 */
+    public static TagVerdict verdict(ItemStack item) {
+        if (item == null || !item.hasItemMeta()) {
+            return TagVerdict.UNTAGGED;
+        }
+        PersistentDataContainer pdc = item.getItemMeta().getPersistentDataContainer();
+        String def = pdc.get(DEF, PersistentDataType.STRING);
+        if (def == null || def.isBlank()) {
+            return TagVerdict.UNTAGGED;
+        }
+        Integer version = pdc.get(TAG_VER, PersistentDataType.INTEGER);
+        String signature = pdc.get(SIG, PersistentDataType.STRING);
+        if (version == null || signature == null) {
+            return TagVerdict.LEGACY;
+        }
+        String payload = payloadOf(pdc);
+        return TagSigner.verify(secret, payload, signature)
+                ? TagVerdict.VALID
+                : TagVerdict.TAMPERED;
+    }
+
+    // ---------------------------------------------------------------- 遷移／失效
+
+    /**
+     * 一次性遷移：把舊版（無簽章）特武補上簽章，保留既有到期時間與其他欄位。
+     */
+    public static ItemStack migrate(ItemStack source) {
         ItemStack item = source.clone();
         ItemMeta meta = item.getItemMeta();
+        applySignature(meta);
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    /**
+     * 讓特武失效：拔除「全部」附魔（含玩家自行加上的），移除 glint，
+     * 把「附魔有效至」換成「附魔已失效」，並把狀態改為已失效後重新簽章。
+     */
+    public static ItemStack expireAll(ItemStack source) {
+        ItemStack item = source.clone();
+        ItemMeta meta = item.getItemMeta();
+        for (Enchantment enchantment : new ArrayList<>(meta.getEnchants().keySet())) {
+            meta.removeEnchant(enchantment);
+        }
+        meta.removeEnchant(Enchantment.LURE);
+
         List<Component> lore = meta.lore() == null
                 ? new ArrayList<>()
                 : new ArrayList<>(meta.lore());
-        boolean alreadyExpired = lore.stream().anyMatch(line -> containsText(line, EXPIRED_TEXT));
-
-        meta.getPersistentDataContainer().set(EXP, PersistentDataType.LONG, 0L);
-        if (alreadyExpired) {
-            item.setItemMeta(meta);
-            return item;
-        }
-
-        for (String name : weapon.enchantments().keySet()) {
-            Enchantment enchantment = enchantment(name);
-            if (enchantment != null) {
-                meta.removeEnchant(enchantment);
-            }
-        }
-        meta.removeEnchant(Enchantment.LURE);
         lore.removeIf(line -> containsText(line, VALID_UNTIL_TEXT));
-        lore.add(TextUtil.component("<red>附魔已失效"));
+        boolean alreadyMarked = lore.stream()
+                .anyMatch(line -> containsText(line, EXPIRED_TEXT));
+        if (!alreadyMarked) {
+            lore.add(TextUtil.component("<red>" + EXPIRED_TEXT));
+        }
         meta.lore(lore);
+
+        PersistentDataContainer pdc = meta.getPersistentDataContainer();
+        pdc.set(EXPIRED, PersistentDataType.INTEGER, 1);
+        pdc.set(EXP, PersistentDataType.LONG, 0L);
+        applySignature(meta);
         item.setItemMeta(meta);
         return item;
+    }
+
+    // ---------------------------------------------------------------- 內部
+
+    private static void applySignature(ItemMeta meta) {
+        PersistentDataContainer pdc = meta.getPersistentDataContainer();
+        pdc.set(TAG_VER, PersistentDataType.INTEGER, TAG_VERSION);
+        pdc.set(SIG, PersistentDataType.STRING, TagSigner.sign(secret, payloadOf(pdc)));
+    }
+
+    private static String payloadOf(PersistentDataContainer pdc) {
+        String def = pdc.get(DEF, PersistentDataType.STRING);
+        Long expiresAt = pdc.get(EXP, PersistentDataType.LONG);
+        String owner = pdc.get(OWNER, PersistentDataType.STRING);
+        Long boughtAt = pdc.get(BOUGHT, PersistentDataType.LONG);
+        Integer expired = pdc.get(EXPIRED, PersistentDataType.INTEGER);
+        return TagSigner.payload(
+                def,
+                expiresAt == null ? 0 : expiresAt,
+                owner,
+                boughtAt == null ? 0 : boughtAt,
+                expired == null ? 0 : expired
+        );
     }
 
     public static Enchantment enchantment(String value) {
